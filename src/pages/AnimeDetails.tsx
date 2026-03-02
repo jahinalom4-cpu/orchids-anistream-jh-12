@@ -37,21 +37,37 @@ const AnimeDetails = () => {
   }, [anime, isInLibrary]);
 
   useEffect(() => {
-    if (!anime?.nextAiringEpisode) return;
+    if (!anime?.nextAiringEpisode) {
+      setCountdown(null);
+      return;
+    }
+
+    // timeUntilAiring is seconds-remaining at the moment AniList responded.
+    // We track elapsed wall-clock time from when we first received the data.
+    const fetchedAt = Date.now();
+    const initialSeconds = anime.nextAiringEpisode.timeUntilAiring;
 
     const updateCountdown = () => {
-      const timeLeft = anime.nextAiringEpisode!.airingAt * 1000 - Date.now();
+      const elapsed = Math.floor((Date.now() - fetchedAt) / 1000);
+      const timeLeft = initialSeconds - elapsed;
+
       if (timeLeft <= 0) {
         setCountdown(null);
         return;
       }
 
-      const days = Math.floor(timeLeft / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((timeLeft % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
+      const days = Math.floor(timeLeft / 86400);
+      const hours = Math.floor((timeLeft % 86400) / 3600);
+      const minutes = Math.floor((timeLeft % 3600) / 60);
+      const seconds = timeLeft % 60;
 
-      setCountdown(`${days}d ${hours}h ${minutes}m ${seconds}s`);
+      if (days > 0) {
+        setCountdown(`${days}d ${hours}h ${minutes}m ${seconds}s`);
+      } else if (hours > 0) {
+        setCountdown(`${hours}h ${minutes}m ${seconds}s`);
+      } else {
+        setCountdown(`${minutes}m ${seconds}s`);
+      }
     };
 
     updateCountdown();

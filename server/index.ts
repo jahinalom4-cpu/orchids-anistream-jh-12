@@ -15,7 +15,7 @@ app.use((req, res, next) => {
 const distPath = path.resolve(__dirname, '../dist');
 app.use(express.static(distPath, { maxAge: '1y', immutable: true, index: false }));
 
-app.get('*', (_req, res) => {
+app.get(/.*$/, (_req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
 

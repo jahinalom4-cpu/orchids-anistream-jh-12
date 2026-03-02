@@ -64,12 +64,9 @@ const SearchPage = () => {
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedQuery(query);
-      if (query.trim().length >= 2) {
-        addToHistory(query);
-      }
     }, 300);
     return () => clearTimeout(timer);
-  }, [query, addToHistory]);
+  }, [query]);
 
   const { data: results, isLoading } = useSearchAnime(debouncedQuery);
 
@@ -106,14 +103,19 @@ const SearchPage = () => {
 
           <div className="flex-1 relative">
             <SearchIcon className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-muted-foreground" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search anime..."
-              autoFocus
-              className="w-full h-10 sm:h-12 pl-10 sm:pl-12 pr-10 sm:pr-12 rounded-lg sm:rounded-xl bg-secondary border-0 text-sm sm:text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-            />
+              <input
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && query.trim().length >= 2) {
+                    addToHistory(query.trim());
+                  }
+                }}
+                placeholder="Search anime..."
+                autoFocus
+                className="w-full h-10 sm:h-12 pl-10 sm:pl-12 pr-10 sm:pr-12 rounded-lg sm:rounded-xl bg-secondary border-0 text-sm sm:text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              />
             {query && (
               <button
                 onClick={() => setQuery('')}
@@ -185,7 +187,7 @@ const SearchPage = () => {
                   <div
                     key={term}
                     className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-secondary/80 transition-colors group cursor-pointer"
-                    onClick={() => setQuery(term)}
+                      onClick={() => { setQuery(term); addToHistory(term); }}
                   >
                     <Clock className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                     <span className="text-sm flex-1 truncate">{term}</span>

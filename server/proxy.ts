@@ -22,56 +22,64 @@ const httpAgent = new http.Agent({
   scheduling: 'fifo',
 });
 
-// Simple in-memory cache for m3u8 manifests (short TTL) and small blobs
+// In-memory cache: m3u8 manifests (short TTL) + TS segments (longer TTL)
 interface CacheEntry { body: Buffer; contentType: string; ts: number; }
 const manifestCache = new Map<string, CacheEntry>();
-const MANIFEST_TTL = 4000; // 4 s — re-fetch after this
+const segmentCache = new Map<string, CacheEntry>();
+const MANIFEST_TTL = 5000;   // 5 s
+const SEGMENT_TTL  = 120000; // 2 min
+const MAX_SEGMENT_CACHE = 200;
 
 function cleanCache() {
   const now = Date.now();
   for (const [k, v] of manifestCache) {
-    if (now - v.ts > MANIFEST_TTL * 5) manifestCache.delete(k);
+    if (now - v.ts > MANIFEST_TTL * 10) manifestCache.delete(k);
+  }
+  for (const [k, v] of segmentCache) {
+    if (now - v.ts > SEGMENT_TTL) segmentCache.delete(k);
+  }
+  if (segmentCache.size > MAX_SEGMENT_CACHE) {
+    const sorted = [...segmentCache.entries()].sort((a, b) => a[1].ts - b[1].ts);
+    sorted.slice(0, segmentCache.size - MAX_SEGMENT_CACHE).forEach(([k]) => segmentCache.delete(k));
   }
 }
-setInterval(cleanCache, 30000);
+setInterval(cleanCache, 20000);
 
 function getSpooferHeaders(decodedUrl: string): Record<string, string> {
   let referer = 'https://hianime.to/';
   let origin  = 'https://hianime.to';
 
-  if (decodedUrl.includes('megacloud'))    { referer = 'https://megacloud.com/';      origin = 'https://megacloud.com'; }
-  else if (decodedUrl.includes('rapid-cloud'))  { referer = 'https://rapid-cloud.co/';  origin = 'https://rapid-cloud.co'; }
-  else if (decodedUrl.includes('rabbitstream')) { referer = 'https://rabbitstream.net/'; origin = 'https://rabbitstream.net'; }
-  else if (decodedUrl.includes('vizcloud'))     { referer = 'https://vizcloud.co/';      origin = 'https://vizcloud.co'; }
+  if (decodedUrl.includes('megacloud'))         { referer = 'https://megacloud.com/';      origin = 'https://megacloud.com'; }
+  else if (decodedUrl.includes('rapid-cloud'))  { referer = 'https://rapid-cloud.co/';     origin = 'https://rapid-cloud.co'; }
+  else if (decodedUrl.includes('rabbitstream')) { referer = 'https://rabbitstream.net/';    origin = 'https://rabbitstream.net'; }
+  else if (decodedUrl.includes('vizcloud'))     { referer = 'https://vizcloud.co/';         origin = 'https://vizcloud.co'; }
 
   return {
-    'Referer':                  referer,
-    'Origin':                   origin,
-    'User-Agent':               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-    'Accept':                   '*/*',
-    'Accept-Language':          'en-US,en;q=0.9',
-    'Accept-Encoding':          'gzip, deflate, br',
-    'Cache-Control':            'no-cache',
-    'Pragma':                   'no-cache',
-    'Sec-Ch-Ua':                '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-    'Sec-Ch-Ua-Mobile':         '?0',
-    'Sec-Ch-Ua-Platform':       '"Windows"',
-    'Sec-Fetch-Dest':           'empty',
-    'Sec-Fetch-Mode':           'cors',
-    'Sec-Fetch-Site':           'cross-site',
-    'DNT':                      '1',
-    'Connection':               'keep-alive',
+    'Referer':              referer,
+    'Origin':               origin,
+    'User-Agent':           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Accept':               '*/*',
+    'Accept-Language':      'en-US,en;q=0.9',
+    'Accept-Encoding':      'gzip, deflate, br',
+    'Cache-Control':        'no-cache',
+    'Pragma':               'no-cache',
+    'Sec-Ch-Ua':            '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+    'Sec-Ch-Ua-Mobile':     '?0',
+    'Sec-Ch-Ua-Platform':   '"Windows"',
+    'Sec-Fetch-Dest':       'empty',
+    'Sec-Fetch-Mode':       'cors',
+    'Sec-Fetch-Site':       'cross-site',
+    'DNT':                  '1',
+    'Connection':           'keep-alive',
   };
 }
 
 function rewriteM3U8(body: string, baseUrl: string): string {
-  const lines = body.split('\n');
-  return lines.map(line => {
+  return body.split('\n').map(line => {
     const t = line.trim();
     if (!t) return line;
 
     if (t.startsWith('#')) {
-      // Rewrite URI="..." attributes (keys, maps, media playlists)
       return line.replace(/URI="([^"]+)"/g, (_m, uri) => {
         try {
           const abs = new URL(uri, baseUrl).href;
@@ -80,7 +88,6 @@ function rewriteM3U8(body: string, baseUrl: string): string {
       });
     }
 
-    // Plain segment / sub-playlist line
     try {
       const abs = new URL(t, baseUrl).href;
       return `${PROXY_PATH}?url=${encodeURIComponent(abs)}`;
@@ -90,8 +97,8 @@ function rewriteM3U8(body: string, baseUrl: string): string {
 
 function decompressResponse(proxyRes: IncomingMessage): NodeJS.ReadableStream {
   const enc = proxyRes.headers['content-encoding'] || '';
-  if (enc.includes('br'))   return proxyRes.pipe(zlib.createBrotliDecompress());
-  if (enc.includes('gzip')) return proxyRes.pipe(zlib.createGunzip());
+  if (enc.includes('br'))      return proxyRes.pipe(zlib.createBrotliDecompress());
+  if (enc.includes('gzip'))    return proxyRes.pipe(zlib.createGunzip());
   if (enc.includes('deflate')) return proxyRes.pipe(zlib.createInflate());
   return proxyRes;
 }
@@ -105,21 +112,14 @@ function fetchWithRetry(
   const isHttps = targetUrl.startsWith('https');
   const client  = isHttps ? https : http;
   const agent   = isHttps ? httpsAgent : httpAgent;
-
-  // Shorter timeout per attempt; back-off slightly
   const timeout = attempt === 0 ? 12000 : 18000;
 
-  const proxyReq = client.request(targetUrl, {
-    method: 'GET',
-    headers,
-    agent,
-    timeout,
-  }, (proxyRes) => {
+  const proxyReq = client.request(targetUrl, { method: 'GET', headers, agent, timeout }, (proxyRes) => {
     const status = proxyRes.statusCode || 200;
 
-    // Cloudflare / server challenges — retry once with slight delay
+    // Cloudflare / server challenges — retry with slight delay
     if ((status === 403 || status === 429 || status === 503) && attempt < 2) {
-      proxyRes.resume(); // drain
+      proxyRes.resume();
       setTimeout(() => fetchWithRetry(targetUrl, headers, res, attempt + 1), 300 * (attempt + 1));
       return;
     }
@@ -136,8 +136,14 @@ function fetchWithRetry(
                    targetUrl.includes('.m3u8') ||
                    targetUrl.includes('playlist');
 
+    const isSegment = !isM3U8 && (
+      targetUrl.includes('.ts') ||
+      targetUrl.includes('.m4s') ||
+      rawContentType.includes('video') ||
+      rawContentType.includes('octet-stream')
+    );
+
     if (isM3U8) {
-      // Check cache
       const cached = manifestCache.get(targetUrl);
       if (cached && Date.now() - cached.ts < MANIFEST_TTL) {
         proxyRes.resume();
@@ -155,10 +161,7 @@ function fetchWithRetry(
         const raw = Buffer.concat(chunks).toString('utf-8');
         const rewritten = rewriteM3U8(raw, targetUrl);
         const outBuf = Buffer.from(rewritten, 'utf-8');
-
-        // Store in cache
         manifestCache.set(targetUrl, { body: outBuf, contentType: 'application/vnd.apple.mpegurl', ts: Date.now() });
-
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
         res.setHeader('Content-Length', outBuf.length);
         res.setHeader('Cache-Control', 'no-cache');
@@ -167,22 +170,50 @@ function fetchWithRetry(
       stream.on('error', () => {
         if (!res.headersSent) { res.statusCode = 502; res.end('M3U8 read error'); }
       });
+    } else if (isSegment) {
+      const cached = segmentCache.get(targetUrl);
+      if (cached && Date.now() - cached.ts < SEGMENT_TTL) {
+        proxyRes.resume();
+        res.statusCode = 200;
+        res.setHeader('Content-Type', cached.contentType);
+        res.setHeader('Content-Length', cached.body.length);
+        res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+        res.setHeader('X-Proxy-Cache', 'HIT');
+        res.end(cached.body);
+        return;
+      }
+
+      const contentLength = parseInt(proxyRes.headers['content-length'] || '0', 10);
+      // Buffer-cache segments under 2 MB; pipe larger ones directly
+      if (contentLength > 0 && contentLength < 2 * 1024 * 1024) {
+        const chunks: Buffer[] = [];
+        proxyRes.on('data', (c: Buffer) => chunks.push(c));
+        proxyRes.on('end', () => {
+          const body = Buffer.concat(chunks);
+          segmentCache.set(targetUrl, { body, contentType: rawContentType || 'video/mp2t', ts: Date.now() });
+          res.statusCode = status;
+          res.setHeader('Content-Type', rawContentType || 'video/mp2t');
+          res.setHeader('Content-Length', body.length);
+          res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+          res.end(body);
+        });
+        proxyRes.on('error', () => { try { res.end(); } catch {} });
+      } else {
+        res.statusCode = status;
+        res.setHeader('Content-Type', rawContentType || 'video/mp2t');
+        if (proxyRes.headers['content-length']) res.setHeader('Content-Length', proxyRes.headers['content-length']);
+        res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
+        if (proxyRes.headers['content-range']) res.setHeader('Content-Range', proxyRes.headers['content-range']!);
+        proxyRes.pipe(res);
+        proxyRes.on('error', () => { try { res.end(); } catch {} });
+      }
     } else {
-      // Binary segment — pipe directly, no buffering
+      // Other resources (subtitles, keys, etc.) — pipe directly
       res.statusCode = status;
       res.setHeader('Content-Type', rawContentType || 'application/octet-stream');
-
-      if (proxyRes.headers['content-length']) {
-        res.setHeader('Content-Length', proxyRes.headers['content-length']);
-      }
-      // Allow HLS.js to cache segments in browser
-      res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
-
-      // Pass range if applicable
-      if (proxyRes.headers['content-range']) {
-        res.setHeader('Content-Range', proxyRes.headers['content-range']!);
-      }
-
+      if (proxyRes.headers['content-length']) res.setHeader('Content-Length', proxyRes.headers['content-length']);
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      if (proxyRes.headers['content-range']) res.setHeader('Content-Range', proxyRes.headers['content-range']!);
       proxyRes.pipe(res);
       proxyRes.on('error', () => { try { res.end(); } catch {} });
     }
@@ -214,7 +245,6 @@ export function handleProxyRequest(req: IncomingMessage, res: ServerResponse): b
   const urlObj = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (!urlObj.pathname.startsWith(PROXY_PATH)) return false;
 
-  // Handle CORS preflight fast
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
