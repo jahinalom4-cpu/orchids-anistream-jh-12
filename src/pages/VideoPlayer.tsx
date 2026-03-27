@@ -425,7 +425,7 @@ const VideoPlayer = () => {
                     escape: false,
                     style: {
                       color: '#fff',
-                      fontSize: '18px',
+                      fontSize: '26px',
                       textShadow: '0 2px 4px rgba(0,0,0,0.8)',
                     },
                   },
@@ -887,11 +887,11 @@ const VideoPlayer = () => {
             display: none !important;
           }
             .art-video-player .art-subtitle {
-              font-size: 0.72rem !important;
+              font-size: 1.1rem !important;
               text-shadow: 0 1px 4px rgba(0,0,0,1) !important;
-              bottom: 6px !important;
+              bottom: 35px !important;
               padding: 2px 10px !important;
-              background: rgba(0, 0, 0, 0.55) !important;
+              background: transparent !important;
               border-radius: 4px !important;
               left: 50% !important;
               transform: translateX(-50%) !important;
@@ -904,8 +904,8 @@ const VideoPlayer = () => {
             }
             @media (min-width: 768px) {
               .art-video-player .art-subtitle {
-                font-size: 1.1rem !important;
-                bottom: 8px !important;
+                font-size: 1.35rem !important;
+                bottom: 37px !important;
                 padding: 4px 18px !important;
                 max-width: 80% !important;
               }
